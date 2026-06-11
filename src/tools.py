@@ -1,7 +1,7 @@
 import json
 import logging
 
-from src.serpapi_client import SerpAPIClient, SerpAPIError
+from src.serpapi_client import SerpAPIClient, SerpAPIError, SerpAPITransientError
 from src.trip_config import TripConfig
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ def _handle_search_flights(
     arrival_id: str,
     outbound_date: str,
     return_date: str,
-) -> list[dict]:
+) -> list[dict] | dict:
     try:
         return client.search_round_trip(
             departure_id=departure_id,
@@ -104,6 +104,17 @@ def _handle_search_flights(
             returns_per_search=trip_cfg.returns_per_search,
             on_call=counter.increment,
         )
+    except SerpAPITransientError as exc:
+        logger.warning("SerpApi transient error in search_flights (data source down): %s", exc)
+        return {
+            "status": "data_source_unavailable",
+            "offers": [],
+            "note": (
+                "A fonte de dados (Google Flights via SerpApi) não respondeu para esta "
+                "busca, mesmo após novas tentativas. Isto NÃO confirma que não há voos — "
+                "é uma indisponibilidade temporária da fonte."
+            ),
+        }
     except SerpAPIError as exc:
         logger.error("SerpAPIError in search_flights: %s", exc)
         return []

@@ -6,6 +6,15 @@ logger = logging.getLogger(__name__)
 
 SERPAPI_URL = "https://serpapi.com/search"
 
+# Marcadores de erro transitório do SerpApi/Google Flights. Quando o Google Flights
+# não devolve dados num instante, o SerpApi responde HTTP 200 com este texto no campo
+# "error". Não significa que a rota não tenha voos — costuma ser intermitente e resolver
+# numa nova tentativa segundos depois.
+_TRANSIENT_ERROR_MARKERS = (
+    "hasn't returned any results",
+    "haven't returned any results",
+)
+
 # Overrides and common suffixes for extracting short city names from airport names
 _CITY_OVERRIDES = {
     "NRT": "Tóquio", "HND": "Tóquio", "KIX": "Osaka", "ITM": "Osaka",
@@ -114,9 +123,31 @@ class SerpAPIError(Exception):
         self.status_code = status_code
 
 
+class SerpAPITransientError(SerpAPIError):
+    """O SerpApi/Google Flights não devolveu dados (erro intermitente).
+
+    Distinto de uma rota genuinamente sem voos: aqui a fonte de dados ficou
+    indisponível no momento, então o resultado vazio NÃO confirma ausência de voos.
+    """
+
+
 class SerpAPIBudgetExhausted(SerpAPIError):
     def __init__(self):
         super().__init__(0, "SerpApi call budget exhausted for this run")
+
+
+def _transient_error_message(resp: requests.Response) -> str | None:
+    """Retorna a mensagem de erro se a resposta for um erro transitório, senão None."""
+    if resp.status_code != 200 or not resp.content:
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    error = data.get("error", "")
+    if any(marker in error for marker in _TRANSIENT_ERROR_MARKERS):
+        return error
+    return None
 
 
 class SerpAPIClient:
@@ -137,6 +168,16 @@ class SerpAPIClient:
                     logger.warning("Server error %d, retrying in %ds", resp.status_code, wait)
                     time.sleep(wait)
                     continue
+                if attempt < 2:
+                    transient = _transient_error_message(resp)
+                    if transient:
+                        wait = 2 ** attempt
+                        logger.warning(
+                            "Transient empty result from SerpApi (%s), retrying in %ds",
+                            transient, wait,
+                        )
+                        time.sleep(wait)
+                        continue
                 return resp
             except requests.RequestException as exc:
                 if attempt == 2:
@@ -249,6 +290,10 @@ class SerpAPIClient:
 
         data = resp.json()
         if "error" in data:
+            if any(marker in data["error"] for marker in _TRANSIENT_ERROR_MARKERS):
+                # Persiste mesmo após os retries em _request_with_retry: a fonte de
+                # dados está indisponível, não é uma confirmação de que não há voos.
+                raise SerpAPITransientError(0, data["error"])
             raise SerpAPIError(0, data["error"])
         return data
 

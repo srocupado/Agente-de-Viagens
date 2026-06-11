@@ -60,6 +60,11 @@ like TYO or OSA — they return no results in this API.
 If a search returns no results, try a different date or airport on the next call. Don't
 waste credits repeating identical searches.
 
+A tool result with "status": "data_source_unavailable" means the flight data source
+(Google Flights via SerpApi) did not respond for that search — it is NOT a confirmation
+that flights are unavailable. The client already retried automatically. If you see this,
+move on to other dates/airports; don't burn the whole budget hammering it.
+
 ## Output format
 
 After collecting results, compile the {trip_cfg.top_offers} cheapest unique options and format a
@@ -85,7 +90,14 @@ Close with:
 
 Rules:
 - Route must list every airport in the itinerary (the card already does this)
-- If no results are found, say so clearly with a short explanation
+- If you found at least one offer, list the offers (cheapest first) as above.
+- If you found ZERO offers, you MUST distinguish two cases in the message:
+  * If EVERY search came back with "status": "data_source_unavailable", do NOT say
+    "Nenhuma passagem encontrada". Instead make clear the search could not be completed
+    because the data source (Google Flights) was temporarily unavailable, and ask the
+    user to rodar novamente em alguns minutos/horas. Keep the header/period lines.
+  * If searches returned genuinely empty results (no such status), then state clearly
+    that no flights were found for the period and give the usual short explanation.
 - Return ONLY the formatted message — no extra explanation or code blocks"""
 
 
